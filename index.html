@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>reveal.js</title>
+
+		<link rel="stylesheet" href="dist/reset.css">
+		<link rel="stylesheet" href="dist/reveal.css">
+		<link rel="stylesheet" href="dist/theme/black.css">
+
+		<!-- Theme used for syntax highlighted code -->
+		<link rel="stylesheet" href="plugin/highlight/monokai.css">
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+				<section data-markdown>
+					<textarea data-template>
+						```text
+						Welcome
+						```
+
+						---
+
+						## Project Loom \in Java 21+
+
+						```java [|2,6]
+						timed(() -> {
+							var threads = new Thread[10_000_000];
+							var results = ConcurrentHashMap.newKeySet();
+							for (int i=0; i<threads.length; i++) {
+								threads[i] = Thread
+									.ofVirtual()
+									.start(() -> results.add(0));
+							}
+
+							for (Thread thread : threads) {
+								thread.join();
+							}
+							return null;
+						});
+						```
+						<!-- .element: class="fragment" -->
+
+						```
+						~2 seconds
+						```
+						<!-- .element: class="fragment" -->
+
+						---
+
+						## How to communicate between threads?
+
+						* shared data
+						* `volatile`, locks, semaphores
+						* leads to deadlocks & race conditions
+
+						---
+
+						## Go
+
+						* not a rich language, in terms of language features
+						* loved by some, hated by some
+						* proved one thing works: communicating using channels
+
+						---
+
+						CSP
+
+						---
+
+						## Let's make channels in Java!
+
+						---
+
+						## Kotlin got there first
+
+						// code example w/ sus functions
+
+						---
+
+						## Channel implementation in Kotlin
+					</textarea>
+				</section>
+
+				<section data-markdown>
+					<textarea data-template>
+						## Jox: virtual-thread friendly channels for Java
+
+						<img src="img/github.png" style="height: 400px;">
+
+						---
+
+						```java
+						public final class Channel<T> implements Source<T>, Sink<T> { ... }
+						```
+
+						---
+
+						```java [1|3-4|5]
+						var ch = new Channel<Integer>(4);
+
+						ch.send(1);
+						ch.send(2);
+						System.out.println(ch.receive());
+						```
+
+						So far, a simple queue
+						<!-- .element: class="fragment" -->
+
+						---
+
+						```java [1-2|4-5|8]
+						var ch1 = new Channel<String>();
+						var ch2 = new Channel<String>();
+
+						Thread.ofVirtual().start(() -> { ch1.send("v1"); });
+						Thread.ofVirtual().start(() -> { ch2.send("v2"); });
+
+						System.out.println(
+						    select(ch1.receiveClause(), ch2.receiveClause())
+						);
+						```
+
+						---
+
+						```java [4-6|7-10]
+						var ch1 = new Channel<Integer>();
+						var ch2 = new Channel<Integer>();
+
+						Thread.ofVirtual().start(() -> { ch1.receive(); });
+						Thread.ofVirtual().start(() -> { ch2.receive(); });
+
+						var sent = select(
+						    ch1.sendClause(13, () -> "first"),
+						    ch2.sendClause(25, () -> "second")
+						);
+
+						System.out.println("Sent: " + sent);
+						```
+
+						---
+
+						```java
+						var ch = new Channel<String>(4);
+
+						ch.send("hello");
+						ch.done();
+
+						System.out.println("Received: " + ch.receiveOrClosed());
+						System.out.println("Received: " + ch.receiveOrClosed());
+						```
+
+						```text
+						Received: hello
+						Received: ChannelDone[]
+						```
+						<!-- .element: class="fragment" -->
+
+						---
+
+						```java
+						var ch = new Channel<String>(4);
+
+						ch.send("hello");
+						ch.error(new RuntimeException("error"));
+
+						System.out.println("Received: " + ch.receiveOrClosed());
+						System.out.println("Received: " + ch.receiveOrClosed());
+						```
+
+						```text
+						Received: ChannelError[cause=RuntimeException: error]
+						Received: ChannelError[cause=RuntimeException: error]
+						```
+						<!-- .element: class="fragment" -->
+					</textarea>
+				</section>
+
+				<section data-markdown>
+					<textarea data-template>
+						## But ... are these "extra" features useful?
+
+						---
+
+						```java
+						public class WebSocket {
+							String receive()
+								throws IOException, WebSocketClosedException { ... }
+						}
+						```
+
+						We've got code which expects a `Source<String>`. How to funnel a `WebSocket` to a `Channel`?
+
+						---
+
+						## Funnelling - producer
+
+						```java [1-12|5,8,10]
+						void wsToChannel(WebSocket ws, Channel<String> c)
+								throws InterruptedException {
+							try {
+								while (true) {
+									c.send(ws.receive());
+								}
+							} catch (IOException e) {
+								c.error(e);
+							} catch (WebSocketClosedException e) {
+								c.done();
+							}
+    					}
+						```
+
+						---
+
+						## Funnelling - consumer
+
+						```java
+						void consume(Channel<String> c) throws InterruptedException {
+							var run = true;
+							while (run) {
+								switch (c.receiveOrClosed()) {
+									case ChannelDone() -> { run = false; }
+									case ChannelError(Throwable cause) -> {
+										run = false;
+									}
+									case String s -> { Thread.sleep(1000); }
+									default -> throw new IllegalStateException();
+								}
+							}
+						}
+						```
+
+						---
+
+						## Tickers: Multiple WebSockets to a Channel
+
+						* many stock tickers, received via multiple WSs
+						* single channel to gather the data
+						* another channel to gather control data (WS errors, completion)
+
+						---
+
+						## Tickers - producer
+
+						```java [1-14|7,10,12]
+						void wsToChannel(String symbol, WebSocket ws,
+							Channel<String> prices,
+							Channel<TickerWebSocketEvent> control)
+								throws InterruptedException {
+							try {
+								while (true) {
+									prices.send(symbol + ": " + ws.receive());
+								}
+							} catch (IOException e) {
+								control.send(new TickerWebSocketError(symbol));
+							} catch (WebSocketClosedException e) {
+								control.send(new TickerWebSocketDone(symbol));
+							}
+						}
+						```
+
+						---
+
+						## Tickers - consumer
+
+						```java [1-15|5-6]
+						void consume(
+							Channel<String> prices,
+							Channel<TickerWebSocketEvent> control) {
+							while (true) {
+								switch (select(control.receiveClause(),
+											   prices.receiveClause())) {
+									case String p -> { Thread.sleep(1000); }
+									case TickerWebSocketDone d -> { /* ... */ }
+									case TickerWebSocketError e -> {
+										restart(e.symbol(), prices, control);
+									}
+									default -> throw new IllegalStateException();
+								}
+							}
+						}
+						```
+
+						---
+
+						## Conflate - fast producer, slow consumer
+
+						```java
+						sealed interface Result permits Received, Sent {}
+						record Received(String value) implements Result {}
+						record Sent() implements Result {}
+						```
+
+						---
+
+						## Conflate - fast producer, slow consumer
+
+						```java
+						void conflate(Source<String> from, Sink<Integer> to)
+							throws InterruptedException {
+
+							var soFar = 0;
+							while (true) {
+								...
+							}
+						}
+						```
+
+						---
+
+						## Conflate - fast producer, slow consumer
+
+						```java
+						Result result;
+						if (soFar > 0) {
+							result = select(
+								to.sendClause(soFar, Sent::new),
+								from.receiveClause(Received::new)
+							);
+						} else {
+							result = new Received(from.receive());
+						}
+
+						switch(result) {
+							case Received r -> soFar += r.value.length();
+							case Sent s     -> soFar  = 0;
+						}
+						```
+
+						---
+
+						## Backpressure
+
+						Just don't receive*.
+
+						<!-- TODO small -->
+						* watch out for the implicit thread queues
+
+						---
+
+						### Performance
+
+						<img src="img/perf.png" style="height: 400px;">
+
+						14ns/operation is 70 million ops / second
+
+						---
+
+						### Performance
+
+						TODO perf2
+					</textarea>
+				</section>
+
+				<section data-markdown>
+					<textarea data-template>
+						## Higher-level interface?
+
+						How to implement `map`?
+
+						---
+
+						## Map, attempt 1
+
+						```scala
+						def map1[T, U](ch: Source[T], f: T => U): Source[U] =
+						  val out = Channel[U]()
+						  Thread.ofVirtual().start(() => {
+						    while(true) {
+						      ch.receive() match
+						        case t: T                   => out.send(f(t)); true
+						        case ChannelClosed.Done     => out.done();     false
+						        case ChannelClosed.Error(e) => out.error(e);   false
+						  	}
+						  })
+						  out
+						```
+
+						---
+
+						## Map, attempt 2
+
+						```scala
+						def map1[T, U](ch: Source[T], f: T => U)(using Ox): Source[U] =
+						  val out = Channel[U]()
+						  fork {
+						    while(true) {
+						      ch.receive() match
+						        case t: T                   => out.send(f(t)); true
+						        case ChannelClosed.Done     => out.done();     false
+						        case ChannelClosed.Error(e) => out.error(e);   false
+						  	}
+						  }
+						  out
+						```
+					</textarea>
+				</section>
+
+				<section data-markdown>
+					<!-- OLD -->
+					<textarea data-template>
+						```text
+                          _  _____  __
+                         | |/ _ \ \/ /
+                      _  | | | | \  /
+                     | |_| | |_| /  \
+                      \___/ \___/_/\_\
+						```
+
+
+						##
+						## Virtual-thread friendly
+						<!-- .element: style="color: #42AFFAFF;" -->
+						## Go-like channels for Java
+						<!-- .element: style="color: #42AFFAFF;" -->
+					</textarea>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						<a href="https://softwaremill.com"><img src="img/perf.png" style="height: 400px;"></a>
+
+						14ns/operation is 70 million ops / second
+					</textarea>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						## jox
+
+						```java
+						interface Channel<T> {
+							T receive() throws InterruptedException;
+							void send(T value) throws InterruptedException;
+
+						    void done();
+						    void error(Throwable reason);
+						}
+
+						class Select {
+						    public static <U> U select(SelectClause<U>... clauses)
+						      throws InterruptedException
+						}
+						```
+					</textarea>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						## Why jox?
+
+						* performance comparable to the state-of-the-art
+						* low memory footprint
+						* feature set inspired by Go channels
+						* based on Kotlin's implementation
+					</textarea>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+
+						On GitHub: <a href="https://github.com/softwaremill/jox">softwaremill/jox</a><br />
+						Apache 2 licensed
+
+						&nbsp;
+
+						```java
+						System.out.println("Subscribe!")
+						```
+						<!-- .element: style="text-align: center; font-size:40px;" -->
+
+						<a href="https://softwaremill.com"><img src="img/sml.png" alt="SoftwareMill logo" style="height: 180px;"></a>
+					</textarea>
+				</section>
+			</div>
+		</div>
+
+		<script src="dist/reveal.js"></script>
+		<script src="plugin/notes/notes.js"></script>
+		<script src="plugin/markdown/markdown.js"></script>
+		<script src="plugin/highlight/highlight.js"></script>
+		<script>
+			// More info about initialization & config:
+			// - https://revealjs.com/initialization/
+			// - https://revealjs.com/config/
+			Reveal.initialize({
+				hash: true,
+
+				// Learn about plugins: https://revealjs.com/plugins/
+				plugins: [ RevealMarkdown, RevealHighlight, RevealNotes ]
+			});
+		</script>
+	</body>
+</html>
