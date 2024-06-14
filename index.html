@@ -8,7 +8,7 @@
 
 		<link rel="stylesheet" href="dist/reset.css">
 		<link rel="stylesheet" href="dist/reveal.css">
-		<link rel="stylesheet" href="dist/theme/black.css">
+		<link rel="stylesheet" href="dist/theme/night.css">
 
 		<!-- Theme used for syntax highlighted code -->
 		<link rel="stylesheet" href="plugin/highlight/monokai.css">
@@ -19,12 +19,13 @@
 				<section data-markdown>
 					<textarea data-template>
 						```text
-						Welcome
+						Loading ...
 						```
+						<!-- .element: style="text-align: center" -->
 
 						---
 
-						## Project Loom \in Java 21+
+						## Loom ∈ Java 21+
 
 						```java [|2,6]
 						timed(() -> {
@@ -51,23 +52,29 @@
 
 						---
 
-						## How to communicate between threads?
+						## Inter-thread communication
 
-						* shared data
-						* `volatile`, locks, semaphores
-						* leads to deadlocks & race conditions
+						* shared data?
+							* `volatile` fields
+							* critical sections guarded by locks
+							* → volatile code
+						* and queues might not be enough ...
 
 						---
 
-						## Go
+						##
+						## Go-like channels for Java using Project Loom
+						<!-- .element: style="color: #42AFFAFF;" -->
+
+						### [Adam Warski](https://warski.org), [SoftwareMill](https://softwaremill.com), June 2024
+
+						---
+
+						<img src="img/gopher.png" style="height: 200px;">
 
 						* not a rich language, in terms of language features
 						* loved by some, hated by some
-						* proved one thing works: communicating using channels
-
-						---
-
-						CSP
+						* proved communicating using channels works ([CSP](https://en.wikipedia.org/wiki/Communicating_sequential_processes))
 
 						---
 
@@ -75,26 +82,65 @@
 
 						---
 
-						## Kotlin got there first
+						<img src="img/kotlin.png" style="height: 200px;">
 
-						// code example w/ sus functions
+						## got there first
+
+						---
+						<!-- .element: data-transition="none" -->
+
+						<img src="img/kotlin2.png" style="height: 200px;">
+
+						## got there first
 
 						---
 
-						## Channel implementation in Kotlin
+						## Channels in Kotlin
+
+						```kotlin
+						val channel = Channel<Int>()
+						launch {
+							for (x in 1..5) channel.send(x * x)
+						}
+
+						repeat(5) { println(channel.receive()) }
+						println("Done!")
+						```
+
+						---
+
+						## Channels in Kotlin
+
+						* fast
+						* support `select`
+						* support completion (closing)
+
+						---
+
+						<a href="https://arxiv.org/pdf/2211.04986"><img src="img/paper.png"></a>
+
+						---
+
+						<img src="img/channel_design.png">
+
+						---
+
+						<img src="img/state_diagram.png">
 					</textarea>
 				</section>
 
 				<section data-markdown>
 					<textarea data-template>
-						## Jox: virtual-thread friendly channels for Java
+						## Jox
 
-						<img src="img/github.png" style="height: 400px;">
+						<img src="img/github.png" style="height: 600px;">
 
 						---
 
 						```java
-						public final class Channel<T> implements Source<T>, Sink<T> { ... }
+						public final class Channel<T> implements Source<T>, Sink<T> {
+							...
+						}
 						```
 
 						---
@@ -181,7 +227,7 @@
 
 				<section data-markdown>
 					<textarea data-template>
-						## But ... are these "extra" features useful?
+						## But ... is this useful?
 
 						---
 
@@ -190,13 +236,17 @@
 							String receive()
 								throws IOException, WebSocketClosedException { ... }
 						}
+
+						public class Business {
+							void process(Source<String> s) { ... }
+						}
 						```
 
-						We've got code which expects a `Source<String>`. How to funnel a `WebSocket` to a `Channel`?
+						How to funnel a `WebSocket` to a `Channel`?
 
 						---
 
-						## Funnelling - producer
+						## Funnelling: producer
 
 						```java [1-12|5,8,10]
 						void wsToChannel(WebSocket ws, Channel<String> c)
@@ -210,22 +260,20 @@
 							} catch (WebSocketClosedException e) {
 								c.done();
 							}
-    					}
+						}
 						```
 
 						---
 
-						## Funnelling - consumer
+						## Funnelling: consumer
 
 						```java
-						void consume(Channel<String> c) throws InterruptedException {
+						void process(Source<String> s) throws InterruptedException {
 							var run = true;
 							while (run) {
-								switch (c.receiveOrClosed()) {
-									case ChannelDone() -> { run = false; }
-									case ChannelError(Throwable cause) -> {
-										run = false;
-									}
+								switch (s.receiveOrClosed()) {
+									case ChannelDone()             -> { run = false; }
+									case ChannelError(Throwable t) -> { run = false; }
 									case String s -> { Thread.sleep(1000); }
 									default -> throw new IllegalStateException();
 								}
@@ -235,7 +283,7 @@
 
 						---
 
-						## Tickers: Multiple WebSockets to a Channel
+						### Separate data & control channels
 
 						* many stock tickers, received via multiple WSs
 						* single channel to gather the data
@@ -243,7 +291,11 @@
 
 						---
 
-						## Tickers - producer
+						<img src="img/multi_tickers.png">
+
+						---
+
+						## Tickers: producer
 
 						```java [1-14|7,10,12]
 						void wsToChannel(String symbol, WebSocket ws,
@@ -264,7 +316,7 @@
 
 						---
 
-						## Tickers - consumer
+						## Tickers: consumer
 
 						```java [1-15|5-6]
 						void consume(
@@ -286,7 +338,13 @@
 
 						---
 
-						## Conflate - fast producer, slow consumer
+						## Conflate
+
+						<img src="img/conflate.png">
+
+						---
+
+						## Conflate
 
 						```java
 						sealed interface Result permits Received, Sent {}
@@ -296,7 +354,7 @@
 
 						---
 
-						## Conflate - fast producer, slow consumer
+						## Conflate
 
 						```java
 						void conflate(Source<String> from, Sink<Integer> to)
@@ -311,9 +369,9 @@
 
 						---
 
-						## Conflate - fast producer, slow consumer
+						## Conflate
 
-						```java
+						```java [|3-6|8|12-13]
 						Result result;
 						if (soFar > 0) {
 							result = select(
@@ -334,10 +392,14 @@
 
 						## Backpressure
 
-						Just don't receive*.
+						Just don't receive*
 
-						<!-- TODO small -->
-						* watch out for the implicit thread queues
+						(*) watch out for the implicit thread queues
+						<!-- .element: style="font-size: small" -->
+
+						---
+
+						<img src="img/backpressure.png">
 
 						---
 
@@ -345,13 +407,15 @@
 
 						<img src="img/perf.png" style="height: 400px;">
 
-						14ns/operation is 70 million ops / second
+						14 ns/operation is 70 million ops/second
 
 						---
 
 						### Performance
 
-						TODO perf2
+						<img src="img/perf2.png" style="height: 400px;">
+
+						&nbsp;
 					</textarea>
 				</section>
 
@@ -359,114 +423,136 @@
 					<textarea data-template>
 						## Higher-level interface?
 
-						How to implement `map`?
+						First, we need structured concurrency
 
 						---
 
-						## Map, attempt 1
+						### Ox: structured concurrency++ for Scala
+
+						Builds on [JEP 453: Structured Concurrency](https://openjdk.org/jeps/453)
+						* provides betters defaults
+						* a programmer-friendly API
+
+						---
+
+						### Run two computations in parallel
 
 						```scala
-						def map1[T, U](ch: Source[T], f: T => U): Source[U] =
-						  val out = Channel[U]()
-						  Thread.ofVirtual().start(() => {
-						    while(true) {
-						      ch.receive() match
-						        case t: T                   => out.send(f(t)); true
-						        case ChannelClosed.Done     => out.done();     false
-						        case ChannelClosed.Error(e) => out.error(e);   false
-						  	}
-						  })
-						  out
+						supervised {        // ① starts a scope
+							val f1 = fork { // ② can only be called within a scope
+								sleep(2.seconds)
+								1
+							}
+
+							val f2 = fork {
+								sleep(1.seconds)
+								2
+							}
+
+							(f1.join(), f2.join()) // ③ block until fork done
+						}
+						// (1, 2)
 						```
 
 						---
 
-						## Map, attempt 2
+						## Mapping a source
 
 						```scala
-						def map1[T, U](ch: Source[T], f: T => U)(using Ox): Source[U] =
-						  val out = Channel[U]()
-						  fork {
-						    while(true) {
-						      ch.receive() match
-						        case t: T                   => out.send(f(t)); true
-						        case ChannelClosed.Done     => out.done();     false
-						        case ChannelClosed.Error(e) => out.error(e);   false
-						  	}
+						def mapAndPrint(s: Source[String]): Unit =
+						  supervised {
+						    s.map(s => s.length) // ① starts a virtual thread
+						     .foreach(n =>       // ② blocking receives in a loop
+								println(s"Got string of length: $n")
 						  }
-						  out
-						```
-					</textarea>
-				</section>
-
-				<section data-markdown>
-					<!-- OLD -->
-					<textarea data-template>
-						```text
-                          _  _____  __
-                         | |/ _ \ \/ /
-                      _  | | | | \  /
-                     | |_| | |_| /  \
-                      \___/ \___/_/\_\
 						```
 
+						---
 
-						##
-						## Virtual-thread friendly
-						<!-- .element: style="color: #42AFFAFF;" -->
-						## Go-like channels for Java
-						<!-- .element: style="color: #42AFFAFF;" -->
-					</textarea>
-				</section>
-				<section data-markdown>
-					<textarea data-template>
-						<a href="https://softwaremill.com"><img src="img/perf.png" style="height: 400px;"></a>
+						## More combinators
 
-						14ns/operation is 70 million ops / second
-					</textarea>
-				</section>
-				<section data-markdown>
-					<textarea data-template>
-						## jox
+						```scala
+						supervised {
+						  Source
+						    .unfold(0)(i => Some(i + 1, i + 1))
+						    .throttle(1, 1.second)
+						    .mapPar(4) { i =>
+						      Thread.sleep(5000)
+						      val j = i * 3
+						      j + 1
+						    }
+						    .filter(i => i % 2 == 0)
+						    .zip(Source.unfold(0)(i => Some(i + 1, i + 1)))
+						    .foreach(println)
+						}
+						```
+
+						---
+
+						## Looks familiar?
 
 						```java
-						interface Channel<T> {
-							T receive() throws InterruptedException;
-							void send(T value) throws InterruptedException;
+						var system = ActorSystem.create("streams");
+						var delayed = CompletableFuture
+							.delayedExecutor(5L, SECONDS);
 
-						    void done();
-						    void error(Throwable reason);
-						}
-
-						class Select {
-						    public static <U> U select(SelectClause<U>... clauses)
-						      throws InterruptedException
-						}
+						Source.range(1, 100)
+							.throttle(1, Duration.ofSeconds(1))
+							.mapAsync(4, i -> CompletableFuture
+									.supplyAsync(() -> i * 3, delayed)
+									.thenApplyAsync(k -> k + 1))
+							.filter(i -> i % 2 == 0)
+							.zip(Source
+								.unfold(0, i -> Optional.of(Pair.create(i+1, i+1))))
+							.runForeach(System.out::println, system)
+							.toCompletableFuture().get();
 						```
+
+						---
+
+						### Jox/Ox streams through an Akka lens
+
+						* cold vs hot processing
+						* two mapping variants: `.map` and `.mapAsView`
+						* you need to decide
+						  * both a bug, and a feature
 					</textarea>
 				</section>
+
 				<section data-markdown>
 					<textarea data-template>
+						## Summary
+
+						---
+
+						## What's available now
+
+						* Java 21 w/ virtual threads
+						* [Jox](https://github.com/softwaremill/jox): Fast and Scalable Channels in Java
+						* [Ox](https://github.com/softwaremill/ox): Structured & high-level concurrency and resiliency for Scala
+
+						---
+
 						## Why jox?
 
 						* performance comparable to the state-of-the-art
 						* low memory footprint
 						* feature set inspired by Go channels
 						* based on Kotlin's implementation
-					</textarea>
-				</section>
-				<section data-markdown>
-					<textarea data-template>
+						* Apache2 licensed, available on GitHub
 
-						On GitHub: <a href="https://github.com/softwaremill/jox">softwaremill/jox</a><br />
-						Apache 2 licensed
-
-						&nbsp;
+						---
 
 						```java
-						System.out.println("Subscribe!")
+						var thankYou = true;
 						```
 						<!-- .element: style="text-align: center; font-size:40px;" -->
+
+						<br />
+
+						* direct-style asynchronous streams are possible
+						* Jox gives us backpressured Go-like channels
+						* Ox allows to avoid explicit concurrency with built-in operations & structured approach
 
 						<a href="https://softwaremill.com"><img src="img/sml.png" alt="SoftwareMill logo" style="height: 180px;"></a>
 					</textarea>
